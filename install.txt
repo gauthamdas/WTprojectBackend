@@ -3,5 +3,5 @@ body-parser
 cors
 jsonwebtoken
 dotenv
-nodemon 
+nodemon  
 mongodb
