@@ -30,7 +30,7 @@ async function getCleanUser(user) {
      client.close()
    }
   if (res[0])
-    return {name: res[0].first_name+' '+res[0].last_name, username: user}
+    return {name: res[0].first_name+' '+res[0].last_name, username: user, ac_num: res[0].ac_number}
   else
     return {name: null, username: null}
   // return {
@@ -191,7 +191,7 @@ async function getRecpData(data){
      client.close()
    }
    if (res[0])
-    return {auth:true, recpBal: res[0].balance, recpAcNum: res[0].ac_number, name: res[0].name, username: res[0].username, chat_id: res[0].chat_id }
+    return {auth:true, recpUpi: res[0].upi_id, recpBal: res[0].balance, recpAcNum: res[0].ac_number, name: res[0].name, username: res[0].username, chat_id: res[0].chat_id }
   else
     return {auth:false}
 }

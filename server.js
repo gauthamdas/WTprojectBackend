@@ -162,7 +162,7 @@ appRoutes.route('/users/activation').post(async (req,res)=>{
   
   //get username of user by sending a confirmation message
   let msg = 'You are subscribed for message updates ';
-  let result = await axios.get(`https://api.telegram.org/bot2062096906:AAEEh4TA4p8GiZQg2dUcVa5VXBaHVgcETUw/sendMessage?chat_id=${ChatId}&text=${msg}`);
+  let result = await axios.get(`https://api.telegram.org/bot<botToken>/sendMessage?chat_id=${ChatId}&text=${msg}`);
   console.log(result.data.result.chat.username,tele_user)
   if (result.data.result.chat.username != tele_user ){
     return res.status(401).json({
@@ -231,16 +231,85 @@ appRoutes.route('/upi/payment').post(async function(req,res){
   operations.updateHistory({transaction_id: transactionId, amt: transferAmt, from_upi: authData.userUpi, from_ac: authData.userAcNum, to_upi: recp_upi_id, to_ac: recpData.recpAcNum, from_name: authData.name, to_name: recpData.name, time: paymentTimeStamp, mode: "UPI"})
   //send message to user
   let userChtId = await operations.fetchDetails({username: check.username});
-  let userMsg = `${transferAmt} has been debited from your account`;
+  let userMsg = `Rs.${transferAmt} transferred from A/c ${authData.userAcNum} to:UPI/${transactionId}. Total Bal:Rs.${parseInt(authData.userBal)-parseInt(transferAmt)}CR. ${paymentTimeStamp}  \n- PES Bank`;
   if (userChtId.status)
-  axios.get(`https://api.telegram.org/bot2062096906:AAEEh4TA4p8GiZQg2dUcVa5VXBaHVgcETUw/sendMessage?chat_id=${userChtId.chat_id}&text=${userMsg}`);
+  axios.get(`https://api.telegram.org/bot<botToken>/sendMessage?chat_id=${userChtId.chat_id}&text=${userMsg}`);
   //send message to recipient
   let recpChtId = await operations.fetchDetails({username: recpData.username})
-  let recpMsg = `${transferAmt} has been credited to your account`;
+  let recpMsg = `Rs.${transferAmt} Credited to A/c ${recpData.recpAcNum} through:UPI/${transactionId}. Total Bal:Rs.${parseInt(recpData.recpBal)+parseInt(transferAmt)}CR. ${paymentTimeStamp}  \n- PES Bank`;
   if (recpChtId.status)
-  axios.get(`https://api.telegram.org/bot2062096906:AAEEh4TA4p8GiZQg2dUcVa5VXBaHVgcETUw/sendMessage?chat_id=${recpChtId.chat_id}&text=${recpMsg}`)
+  axios.get(`https://api.telegram.org/bot<botToken>/sendMessage?chat_id=${recpChtId.chat_id}&text=${recpMsg}`)
   // return the token along with user details
   return res.json({ flag: true, amt: transferAmt, transId: transactionId, to_upi: recp_upi_id , to_name: recpData.name});
+})
+
+//neft/rtgs
+appRoutes.route('/neftrtgs/payment').post(async function(req,res){
+  const token = req.body.token;
+  const recp_acNum = req.body.ac_num;
+  const t_pass = req.body.t_pass;
+  const transferAmt = req.body.amt;
+  let check = await operations.verifyTok(token);
+  if (!check.auth) {
+    return res.status(401).json({
+    error: true,
+    message: "Unauthorised Access"
+    });
+  }
+  const authData = await operations.getAuthData({username: check.username, t_pass: t_pass})
+  if (!authData.auth) {
+    return res.status(401).json({
+    error: true,
+    message: "Invalid Transaction Password"
+    });
+  }
+  
+  const recpData = await operations.getRecpData({ac_number: recp_acNum})
+  if (!recpData.auth) {
+    return res.status(401).json({
+    error: true,
+    message: "Invalid Recipient"
+    });
+  }
+
+  //check for enough balance
+  if (parseInt(authData.userBal)<parseInt(transferAmt)) {
+    return res.status(401).json({
+    error: true,
+    message: "Insufficient Balance"
+    });
+  }
+
+  //Update user balance
+  operations.updateUserBalance({amt: (parseInt(authData.userBal)-parseInt(transferAmt)), userUpi: authData.userUpi});
+  //update recipient balance
+  operations.updateRecpBalance({amt: (parseInt(recpData.recpBal)+parseInt(transferAmt)), recpUpi: recpData.recpUpi});
+  //Get transaction id
+  const transactionId = await operations.getTransactionId();
+  //get current timestamp
+  const paymentTimeStamp = new Date().toLocaleString();
+  //send a notification if user is online
+  const recpSocId = await operations.getRecpSocketId(recpData.username);
+  // console.log(io.sockets.adapter.rooms)
+  await io.to(recpSocId.socket_id).emit("payment_notification",{transaction_id: transactionId, amt: transferAmt, from_upi: authData.userUpi, from_ac: authData.userAcNum, to_upi: recpData.recpUpi, to_ac: recpData.recpAcNum, from_name: authData.name, to_name: recpData.name, time: paymentTimeStamp, mode: "NEFT", type: "credit"});
+  //update user history
+  operations.updateUserHistory({transaction_id: transactionId, amt: transferAmt, from_upi: authData.userUpi, from_ac: authData.userAcNum, to_upi: recpData.recpUpi, to_ac: recpData.recpAcNum, from_name: authData.name, to_name: recpData.name, time: paymentTimeStamp, mode: "UPI", type: "debit"});
+  //update recipient history
+  operations.updateRecpHistory({transaction_id: transactionId, amt: transferAmt, from_upi: authData.userUpi, from_ac: authData.userAcNum, to_upi: recpData.recpUpi, to_ac: recpData.recpAcNum, from_name: authData.name, to_name: recpData.name, time: paymentTimeStamp, mode: "UPI", type: "credit"});
+  //store payment log
+  operations.updateHistory({transaction_id: transactionId, amt: transferAmt, from_upi: authData.userUpi, from_ac: authData.userAcNum, to_upi: recpData.recpUpi, to_ac: recpData.recpAcNum, from_name: authData.name, to_name: recpData.name, time: paymentTimeStamp, mode: "UPI"})
+  //send message to user
+  let userChtId = await operations.fetchDetails({username: check.username});
+  let userMsg = `Rs.${transferAmt} transferred from A/c ${authData.userAcNum} to:NEFT/${transactionId}. Total Bal:Rs.${parseInt(authData.userBal)-parseInt(transferAmt)}CR. ${paymentTimeStamp}  \n- PES Bank`;
+  if (userChtId.status)
+  axios.get(`https://api.telegram.org/bot<botToken>/sendMessage?chat_id=${userChtId.chat_id}&text=${userMsg}`);
+  //send message to recipient
+  let recpChtId = await operations.fetchDetails({username: recpData.username})
+  let recpMsg = `Rs.${transferAmt} Credited to A/c ${recpData.recpAcNum} through:UPI/${transactionId}. Total Bal:Rs.${parseInt(recpData.recpBal)+parseInt(transferAmt)}CR. ${paymentTimeStamp}  \n- PES Bank`;
+  if (recpChtId.status)
+  axios.get(`https://api.telegram.org/bot<botToken>/sendMessage?chat_id=${recpChtId.chat_id}&text=${recpMsg}`)
+  // return the token along with user details
+  return res.json({ flag: true, amt: transferAmt, transId: transactionId, to_ac: recpData.recpAcNum , to_name: recpData.name});
 })
 
 //get transaction history of requested user
